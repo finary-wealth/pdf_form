@@ -45,12 +45,16 @@ mod sealed {
     pub trait Index {}
 }
 
+fn name_str(obj: &Object) -> Option<&str> {
+    std::str::from_utf8(obj.as_name().ok()?).ok()
+}
+
 pub trait Index: sealed::Index + Copy {
     fn object_id(&self, form: &Form) -> Option<ObjectId>;
 
     fn field_dict<'f>(&self, form: &'f Form) -> Result<&'f Dictionary, lopdf::Error> {
         let Some(oid) = self.object_id(form) else {
-            return Err(lopdf::Error::ObjectNotFound);
+            return Err(lopdf::Error::ObjectNotFound((0, 0)));
         };
 
         form.document.get_object(oid)?.as_dict()
@@ -58,7 +62,7 @@ pub trait Index: sealed::Index + Copy {
 
     fn field_dict_mut<'f>(&self, form: &'f mut Form) -> Result<&'f mut Dictionary, lopdf::Error> {
         let Some(oid) = self.object_id(form) else {
-            return Err(lopdf::Error::ObjectNotFound);
+            return Err(lopdf::Error::ObjectNotFound((0, 0)));
         };
         form.document.get_object_mut(oid)?.as_dict_mut()
     }
@@ -276,7 +280,7 @@ impl Form {
     pub fn get_type(&self, n: impl Index) -> FieldType {
         // unwraps should be fine because load should have verified everything exists
         let field = n.field_dict(self).unwrap();
-        let type_str = field.get(b"FT").unwrap().as_name_str().unwrap_or_default();
+        let type_str = name_str(field.get(b"FT").unwrap()).unwrap_or_default();
         if type_str == "Btn" {
             let flags = ButtonFlags::from_bits_truncate(get_field_flags(field));
             if has_kids(field)
@@ -345,9 +349,9 @@ impl Form {
             FieldType::Button => FieldState::Button,
             FieldType::Radio => FieldState::Radio {
                 selected: match field.get(b"V") {
-                    Ok(name) => name.as_name_str().unwrap().to_owned(),
+                    Ok(name) => name_str(name).unwrap().to_owned(),
                     _ => match field.get(b"AS") {
-                        Ok(name) => name.as_name_str().unwrap().to_owned(),
+                        Ok(name) => name_str(name).unwrap().to_owned(),
                         _ => "".to_owned(),
                     },
                 },
@@ -357,9 +361,9 @@ impl Form {
             },
             FieldType::CheckBox => FieldState::CheckBox {
                 is_checked: match field.get(b"V") {
-                    Ok(name) => name.as_name_str().unwrap() == "Yes",
+                    Ok(name) => name_str(name).unwrap() == "Yes",
                     _ => match field.get(b"AS") {
-                        Ok(name) => name.as_name_str().unwrap() == "Yes",
+                        Ok(name) => name_str(name).unwrap() == "Yes",
                         _ => false,
                     },
                 },
@@ -538,7 +542,8 @@ impl Form {
                     return Err(ValueError::NotFound);
                 };
 
-                let encoded = encode_utf16_be(&s);
+                let mut encoded = Vec::new();
+                encode_utf16_be(&s, &mut encoded);
                 field.set("V", Object::string_literal(encoded));
 
                 // Regenerate text appearance confoming the new text but ignore the result
